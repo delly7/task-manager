@@ -31,34 +31,39 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
 
         if (command === 'list' || !text_args) {
             // list
-            let task_str = "";
-            const queryData = await db.collection('tasks').where("user_id", "==", userid).orderBy("created_at", "asc").get();
+            let task_str = '';
+            const queryData = await db.collection('tasks').where('user_id', '==', userid).orderBy('created_at', 'asc').get();
 
             const promises = queryData.docs.map(doc => {
                 const obj = doc.data();
                 if (!obj.is_end) {
-                    task_str += ":black_square_button: " + obj.task_name + "\n";
+                    task_str += ':black_square_button: ' + obj.task_name + '\n';
                 } else {
-                    task_str += ":ballot_box_with_check: " + obj.task_name + "\n";
+                    task_str += ':ballot_box_with_check: ' + obj.task_name + '\n';
                 }
             });
             await Promise.all(promises);
-            let desc = "";
+            let desc = '';
             if (!task_str) {
-                desc = "現在 <@" + userid + "> の タスクはありません :palm_tree:";
+                desc = '現在 <@' + userid + '> の タスクはありません :palm_tree:';
             } else {
-                desc = "<@" + userid + "> のタスク一覧:\n" + task_str;
+                desc = '<@' + userid + '> のタスク一覧:\n' + task_str;
             }
             res.send({
                 text: desc,
-                response_type: "in_channel",
+                response_type: 'in_channel',
             });
         } else if (command === 'add' && text_args) {
             // add
+            if (text_args[0] === '') {
+                const error = new RequestError('No task name');
+                error.code = 500;
+                throw error;
+            }
             const created_at = new Date();
-            const task_name = text_args[0];
+            const task_name = text_args.join(' ');
 
-            let queryData = await db.collection('tasks').where("user_id", "==", userid).where("task_name", "==", task_name).get();
+            const queryData = await db.collection('tasks').where('user_id', '==', userid).where('task_name', '==', task_name).get();
             if (queryData.empty) {
                 const data = {
                     user_name: username,
@@ -70,63 +75,66 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
                 };
                 await db.collection('tasks').add(data);
             }
-            const desc = "<@" + userid + "> のタスクを追加: " + task_name;
+            const desc = '<@' + userid + '> のタスクを追加: ' + task_name;
             res.send({
                 text: desc,
-                response_type: "in_channel",
+                response_type: 'in_channel',
             });
         } else if (command === 'end' && text_args) {
             // end
-            const task_name = text_args[0];
-            let queryData = await db.collection('tasks').where("user_id", "==", userid).where("task_name", "==", task_name).get();
-            if (queryData.empty) {
-                const error = new RequestError("No such task");
+            const task_name = text_args.join(' ');
+            const endData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_name).endAt(task_name + '\uf8ff').get();
+            if (endData.empty) {
+                const error = new RequestError('No such task');
                 error.code = 500;
                 throw error;
             }
 
-            // list
-            queryData.docs.map(async doc => {
+            let desc = '';
+            const batch = db.batch();
+            endData.docs.map(async doc => {
                 const doc_id = doc.id;
                 const updated_at = new Date();
-                await db.collection('tasks').doc(doc_id).update(
+                const docRef = db.collection('tasks').doc(doc_id);
+                batch.update(
+                    docRef,
                     {
                         is_end: true,
                         updated_at: updated_at,
                     });
             });
-            let desc = "<@" + userid + "> のタスクを終了: " + task_name + "\n";
-
-            let task_str = "";
-            queryData = await db.collection('tasks').where("user_id", "==", userid).orderBy("created_at", "asc").get();
-
-            const promises = queryData.docs.map(doc => {
-                const obj = doc.data();
-                if (!obj.is_end) {
-                    task_str += ":black_square_button: " + obj.task_name + "\n";
+            // list
+            let task_str = '';
+            return batch.commit().then(async () => {
+                const listData = await db.collection('tasks').where('user_id', '==', userid).orderBy('created_at', 'asc').get();
+                const promises = listData.docs.map(doc => {
+                    const obj = doc.data();
+                    if (!obj.is_end) {
+                        task_str += ':black_square_button: ' + obj.task_name + '\n';
+                    } else {
+                        task_str += ':ballot_box_with_check: ' + obj.task_name + '\n';
+                    }
+                });
+                await Promise.all(promises);
+                desc = '<@' + userid + '> のタスクを終了: ' + task_name + '\n';
+                if (!task_str) {
+                    desc += '現在 <@' + userid + '> の タスクはありません :palm_tree:';
                 } else {
-                    task_str += ":ballot_box_with_check: " + obj.task_name + "\n";
+                    desc += '<@' + userid + '> のタスク一覧:\n' + task_str;
                 }
-            });
-            await Promise.all(promises);
 
-            if (!task_str) {
-                desc += "現在 <@" + userid + "> の タスクはありません :palm_tree:";
-            } else {
-                desc += "<@" + userid + "> のタスク一覧:\n" + task_str;
-            }
-
-            res.send({
-                text: desc,
-                response_type: "in_channel",
+                res.send({
+                    text: desc,
+                    response_type: 'in_channel',
+                });
             });
 
         } else if (command === 'clear' && text_args) {
             if (text_args[0] === '-a' || text_args[0] === 'all') {
                 // clear all
-                const queryData = await db.collection('tasks').where("user_id", "==", userid).get();
+                const queryData = await db.collection('tasks').where('user_id', '==', userid).get();
                 if (queryData.empty) {
-                    const error = new RequestError("No tasks");
+                    const error = new RequestError('No tasks');
                     error.code = 500;
                     throw error;
                 }
@@ -134,65 +142,63 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
                     const doc_id = doc.id;
                     await db.collection('tasks').doc(doc_id).delete();
                 });
-                const desc = "<@" + userid + "> のタスクをすべて完了";
+                const desc = '<@' + userid + '> のタスクをすべて完了';
                 res.send({
                     text: desc,
-                    response_type: "in_channel",
+                    response_type: 'in_channel',
                 });
             } else {
                 // clear
-                const task_name = text_args[0];
-                let queryData = await db.collection('tasks').where("user_id", "==", userid).where("task_name", "==", task_name).get();
-                if (queryData.empty) {
-                    const error = new RequestError("No such task");
+                const task_name = text_args.join(' ');
+                const clearData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_name).endAt(task_name + '\uf8ff').get();
+                if (clearData.empty) {
+                    const error = new RequestError('No such task');
                     error.code = 500;
                     throw error;
                 }
-                queryData.docs.map(async doc => {
+
+                const batch = db.batch();
+                 clearData.docs.map(async doc => {
                     const doc_id = doc.id;
-                    await db.collection('tasks').doc(doc_id).delete();
+                    const docRef = db.collection('tasks').doc(doc_id);
+                    batch.delete(docRef);
                 });
-                let desc = "<@" + userid + "> のタスクを完了: " + task_name + "\n";
 
                 // list
-                queryData.docs.map(async doc => {
-                    const doc_id = doc.id;
-                    await db.collection('tasks').doc(doc_id).update({ is_end: true });
-                });
-
-                let task_str = "";
-                queryData = await db.collection('tasks').where("user_id", "==", userid).orderBy("created_at", "asc").get();
-
-                const promises = queryData.docs.map(doc => {
-                    const obj = doc.data();
-                    if (!obj.is_end) {
-                        task_str += ":black_square_button: " + obj.task_name + "\n";
+                let task_str = '';
+                return batch.commit().then(async () => {
+                    const listData = await db.collection('tasks').where('user_id', '==', userid).orderBy('created_at', 'asc').get();
+                    const promises = listData.docs.map(doc => {
+                        const obj = doc.data();
+                        if (!obj.is_end) {
+                            task_str += ':black_square_button: ' + obj.task_name + '\n';
+                        } else {
+                            task_str += ':ballot_box_with_check: ' + obj.task_name + '\n';
+                        }
+                    });
+                    await Promise.all(promises);
+                    let desc = '<@' + userid + '> のタスクを完了: ' + task_name + '\n';
+                    if (!task_str) {
+                        desc += '現在 <@' + userid + '> の タスクはありません :palm_tree:';
                     } else {
-                        task_str += ":ballot_box_with_check: " + obj.task_name + "\n";
+                        desc += '<@' + userid + '> のタスク一覧:\n' + task_str;
                     }
-                });
-                await Promise.all(promises);
 
-                if (!task_str) {
-                    desc += "現在 <@" + userid + "> の タスクはありません :palm_tree:";
-                } else {
-                    desc += "<@" + userid + "> のタスク一覧:\n" + task_str;
-                }
-
-                res.send({
-                    text: desc,
-                    response_type: "in_channel",
+                    res.send({
+                        text: desc,
+                        response_type: 'in_channel',
+                    });
                 });
             }
         } else if (command === 'help') {
             // help
-            const desc = "TaskManagerのつかいかた\n `/task list`                 : 自分のタスク一覧\n `/task add <task>`      : <task>を追加\n `/task end <task>`      : <task>を終了（消さない）\n `/task clear <task>`   : <task>を削除　-aを指定すれば全削除する";
+            const desc = 'TaskManagerのつかいかた\n `/task list`                 : 自分のタスク一覧\n `/task add <task>`      : <task>を追加\n `/task end <task>`      : <task>を終了（消さない）\n `/task clear <task>`   : <task>を削除　-aを指定すれば全削除する';
             res.send({
                 text: desc,
-                response_type: "in_channel",
+                response_type: 'in_channel',
             });
         } else {
-            const error = new RequestError("Bad usage");
+            const error = new RequestError('Bad usage');
             error.code = 500;
             throw error;
         }
