@@ -41,4 +41,5 @@ firebase functions:config:set slack.token="your-slack-app-token"
 * /\<command\> add \<task\> - Add user's task
 * /\<command\> end \<task\> - Check a box of \<task\>
 * /\<command\> clear \<task\> - Remove \<task\> from task list
-* /\<command\> clear [ -a | all ] - Remove user's all tasks from task list
+  * /\<command\> clear [ -a | all ] - Remove all tasks from task list
+  * /\<command\> clear [ -d | done ] - Remove tasks which already done
