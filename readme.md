@@ -26,7 +26,8 @@ firebase init
 #### Set config of slack token
 
 ```sh
-firebase functions:config:set slack.token="your-slack-app-token"
+firebase functions:config:set slack.app.token="your-slack-app-verification-token"
+firebase functions:config:set slack.oauth.token="your-slack-app-oauth-token"
 ```
 
 ## Deployopment

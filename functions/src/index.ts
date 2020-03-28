@@ -1,5 +1,6 @@
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin'
+import * as admin from 'firebase-admin';
+import axios from 'axios';
 
 // // Start writing Firebase Functions
 // // https://firebase.google.com/docs/functions/typescript
@@ -18,7 +19,7 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
             error.code = 405;
             throw error;
         }
-        if (!req.body || req.body.token !== functions.config().slack.token) {
+        if (!req.body || req.body.token !== functions.config().slack.app.token) {
             console.log(req.body, functions.config().slack.token);
             const error = new RequestError('Invalid credentials');
             error.code = 401;
@@ -27,20 +28,41 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
         const [command, ...args] = req.body.text.split(' ');
         const username = req.body.user_name;
         const userid = req.body.user_id;
+        const channel_id = req.body.channel_id;
         const text_args = args;
 
         // help (only visible for post user)
         if (command === 'help') {
             const body = 'TaskManagerのつかいかた\n `/task list`                 : 自分のタスク一覧\n `/task add <task>`      : <task>を追加\n `/task end <task>`      : <task>を終了（消さない）\n `/task clear <task>`   : <task>を削除　-aで全削除, -dで終了タスク全削除';
-            res.send({
-                text: body
-            });
+            response(body)
         }
 
-        function send(body: string, type = 'in_channel') {
+        // slash command response
+        function response(body: string, type = 'ephemeral') {
             res.send({
                 text: body,
                 response_type: type,
+            });
+        }
+
+        // post message via slack web API
+        function post(body: string) {
+            return new Promise<string>(async (resolve) => {
+                const token = functions.config().slack.oauth.token;
+                const url = 'https://slack.com/api/chat.postMessage';
+
+                const result = await axios.request({
+                    headers: {
+                        'authorization': `Bearer ${token}`
+                    },
+                    url,
+                    method: "POST",
+                    data: {
+                        channel: channel_id,
+                        text: body
+                    }
+                });
+                resolve(result.data);
             });
         }
 
@@ -176,18 +198,22 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
             });
         }
 
-
         if (command === 'list' || !text_args) {
-            await list('').then(value => send(value));
+            await list('').then(value => post(value));
+            res.status(200).send('');
         } else if (command === 'add' && text_args) {
-            await add().then(value => send(value));
+            await add().then(value => post(value));
+            res.status(200).send('');
         } else if (command === 'end' && text_args) {
-            await end().then(value => send(value));
+            await end().then(value => post(value));
+            res.status(200).send('');
         } else if (command === 'clear' && text_args) {
-            await clear().then(value => send(value));
+            await clear().then(value => post(value));
+            res.status(200).send('');
         } else {
             const error = new RequestError('Bad usage');
             error.code = 500;
+            throw error;
         }
     } catch (error) {
         res.send(error);
