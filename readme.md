@@ -40,6 +40,8 @@ firebase functions:config:set slack.oauth.token="your-slack-app-oauth-token"
 ### Command list
 * /\<command\> list - Display the user's task list
 * /\<command\> add \<task\> - Add user's task
+* /\<command\> start \<task\> - Start user's task
+* /\<command\> stop \<task\> - Stop user's task
 * /\<command\> end \<task\> - Check a box of \<task\>
 * /\<command\> clear \<task\> - Remove \<task\> from task list
   * /\<command\> clear [ -a | all ] - Remove all tasks from task list

@@ -29,11 +29,16 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
         const username = req.body.user_name;
         const userid = req.body.user_id;
         const channel_id = req.body.channel_id;
-        const text_args = args;
 
         // help (only visible for post user)
         if (command === 'help') {
-            const body = 'TaskManagerのつかいかた\n `/task list`                 : 自分のタスク一覧\n `/task add <task>`      : <task>を追加\n `/task end <task>`      : <task>を終了（消さない）\n `/task clear <task>`   : <task>を削除　-aで全削除, -dで終了タスク全削除';
+            const body = 'TaskManagerのつかいかた\n '
+                + '`/task list`                : 自分のタスク一覧\n '
+                + '`/task add <task>`      : <task>を追加\n'
+                + '`/task start <task>`   : <task>を開始\n'
+                + '`/task stop <task>`      : <task>を停止\n'
+                + '`/task end <task>`      : <task>を終了\n '
+                + '`/task clear <task>`   : <task>を削除　-aで全削除, -dで終了タスク全削除';
             response(body)
         }
 
@@ -69,15 +74,24 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
         // list
         function list(string: string) {
             return new Promise<string>(async resolve => {
-                let task_str = '';
+                const task_str = new Array;
                 const queryData = await db.collection('tasks').where('user_id', '==', userid).orderBy('created_at', 'asc').get();
 
                 const promises = queryData.docs.map(doc => {
                     const obj = doc.data();
-                    if (!obj.is_end) {
-                        task_str += ':black_square_button: ' + obj.task_name + '\n';
-                    } else {
-                        task_str += ':ballot_box_with_check: ' + obj.task_name + '\n';
+                    switch (obj.status) {
+                        case 'open':
+                            task_str.push(':black_square_button: ' + obj.task_name);
+                            break;
+                        case 'in_progress':
+                            task_str.push(':arrow_right: ' + obj.task_name);
+                            break;
+                        case 'resolved':
+                            task_str.push(':ballot_box_with_check: ' + obj.task_name);
+                            break;
+                        default:
+                            task_str.push(':black_square_button: ' + obj.task_name);
+                            break;
                     }
                 });
                 await Promise.all(promises);
@@ -85,7 +99,7 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
                 if (!task_str) {
                     desc += '現在 <@' + userid + '> の タスクはありません :palm_tree:';
                 } else {
-                    desc += '<@' + userid + '> のタスク一覧:\n' + task_str;
+                    desc += '<@' + userid + '> のタスク一覧:\n' + task_str.join('\n');
                 }
                 resolve(desc);
             });
@@ -94,120 +108,210 @@ export const task = functions.region('asia-northeast1').https.onRequest(async (r
         // add
         function add() {
             return new Promise<string>(async (resolve, reject) => {
-                if (text_args[0] === '') {
-                    const error = new RequestError('No task name');
+                try {
+                    if (args[0] === '') {
+                        const error = new RequestError('No task name');
+                        throw error;
+                    }
+                    const created_at = new Date();
+                    const task_name = args.join(' ');
+
+                    const queryData = await db.collection('tasks').where('user_id', '==', userid).where('task_name', '==', task_name).get();
+                    if (queryData.empty) {
+                        const data = {
+                            user_name: username,
+                            user_id: userid,
+                            task_name: task_name,
+                            status: 'open',
+                            created_at: created_at,
+                            updated_at: created_at,
+                        };
+                        await db.collection('tasks').add(data);
+                    }
+                    const desc = '<@' + userid + '> のタスクを追加: ' + task_name;
+                    resolve(desc);
+                } catch (error) {
                     error.code = 500;
                     reject(error);
                 }
-                const created_at = new Date();
-                const task_name = text_args.join(' ');
-
-                const queryData = await db.collection('tasks').where('user_id', '==', userid).where('task_name', '==', task_name).get();
-                if (queryData.empty) {
-                    const data = {
-                        user_name: username,
-                        user_id: userid,
-                        task_name: task_name,
-                        is_end: false,
-                        created_at: created_at,
-                        updated_at: created_at,
-                    };
-                    await db.collection('tasks').add(data);
-                }
-                const desc = '<@' + userid + '> のタスクを追加: ' + task_name;
-                resolve(desc);
             });
         }
 
-        function end() {
+        // start
+        function start() {
             return new Promise<string>(async (resolve, reject) => {
-                // end
-                const task_str = text_args.join(' ');
-                const endData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_str).endAt(task_str + '\uf8ff').get();
-                if (endData.empty) {
-                    const error = new RequestError('No such task');
+                try {
+                    // find
+                    const task_str = args.join(' ');
+                    const desc = new Array();
+                    let startData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_str).endAt(task_str + '\uf8ff').get();
+                    // add
+                    if (startData.empty) {
+                        await add();
+                        startData = await db.collection('tasks').where('user_id', '==', userid).where('task_name', '==', task_str).get();
+                    }
+
+                    if (startData.docs.length > 1) {
+                        const error = new RequestError('Can\'t specify task');
+                        throw error;
+                    }
+                    startData.docs.map(async doc => {
+                        const doc_id = doc.id;
+                        const task_name = doc.data().task_name;
+                        const updated_at = new Date();
+                        desc.push('<@' + userid + '> のタスクを開始: ' + task_name);
+                        await db.collection('tasks').doc(doc_id).update(
+                            {
+                                status: 'in_progress',
+                                updated_at: updated_at,
+                            });
+                    });
+                    resolve(desc.join('\n'));
+                } catch (error) {
                     error.code = 500;
                     reject(error);
                 }
+            });
+        }
 
-                let desc = '';
-                const batch = db.batch();
-                endData.docs.map(async doc => {
-                    const doc_id = doc.id;
-                    const task_name = doc.data().task_name;
-                    const updated_at = new Date();
-                    const docRef = db.collection('tasks').doc(doc_id);
-                    batch.update(
-                        docRef,
-                        {
-                            is_end: true,
-                            updated_at: updated_at,
-                        });
-                    desc += '<@' + userid + '> のタスクを終了: ' + task_name + '\n';
-                });
-                // list
-                resolve(batch.commit().then(async () => list(desc + '\n')));
+        // stop
+        function stop() {
+            return new Promise<string>(async (resolve, reject) => {
+                try {
+                    const task_str = args.join(' ');
+                    const stopData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_str).endAt(task_str + '\uf8ff').get();
+                    if (stopData.empty) {
+                        const error = new RequestError('No such task');
+                        throw error;
+                    }
+
+                    const desc = new Array;
+                    if (stopData.docs.length !== 1) {
+                        const error = new RequestError('Can\'t specify task');
+                        throw error;
+                    }
+                    stopData.docs.map(async doc => {
+                        const doc_id = doc.id;
+                        const task_name = doc.data().task_name;
+                        const updated_at = new Date();
+                        desc.push('<@' + userid + '> のタスクを停止: ' + task_name);
+                        await db.collection('tasks').doc(doc_id).update(
+                            {
+                                status: 'open',
+                                updated_at: updated_at,
+                            });
+                    });
+                    resolve(desc.join('\n'));
+                } catch (error) {
+                    error.code = 500;
+                    reject(error);
+                }
+            });
+        }
+
+        // end
+        function end() {
+            return new Promise<string>(async (resolve, reject) => {
+                try {
+                    const task_str = args.join(' ');
+                    const endData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_str).endAt(task_str + '\uf8ff').get();
+                    if (endData.empty) {
+                        const error = new RequestError('No such task');
+                        throw error;
+                    }
+
+                    const desc = new Array;
+                    const batch = db.batch();
+                    endData.docs.map(async doc => {
+                        const doc_id = doc.id;
+                        const task_name = doc.data().task_name;
+                        const updated_at = new Date();
+                        const docRef = db.collection('tasks').doc(doc_id);
+                        batch.update(
+                            docRef,
+                            {
+                                status: 'resolved',
+                                updated_at: updated_at,
+                            });
+                        desc.push('<@' + userid + '> のタスクを終了: ' + task_name);
+                    });
+
+                    // list
+                    resolve(batch.commit().then(async () => list(desc.join('\n') + '\n\n')));
+                } catch (error) {
+                    error.code = 500;
+                    reject(error);
+                }
             });
         }
 
         // clear
         function clear() {
             return new Promise<string>(async (resolve, reject) => {
-                if (text_args[0] === '-a' || text_args[0] === 'all') {
-                    // clear all
-                    const queryData = await db.collection('tasks').where('user_id', '==', userid).get();
-                    if (queryData.empty) {
-                        const error = new RequestError('No tasks');
-                        error.code = 500;
-                        reject(error);
-                    }
-                    queryData.docs.map(async doc => {
-                        const doc_id = doc.id;
-                        await db.collection('tasks').doc(doc_id).delete();
-                    });
-                    const desc = '<@' + userid + '> のタスクをすべて完了';
-                    resolve(desc);
-                } else {
-                    // clear
-                    let desc = '';
-                    let clearData;
-                    if (text_args[0] === '-d' || text_args[0] === 'done') {
-                        clearData = await db.collection('tasks').where('user_id', '==', userid).where('is_end', '==', true).get();
+                try {
+                    if (args[0] === '-a' || args[0] === 'all') {
+                        // clear all
+                        const queryData = await db.collection('tasks').where('user_id', '==', userid).get();
+                        if (queryData.empty) {
+                            const error = new RequestError('No tasks');
+                            throw error;
+                        }
+                        queryData.docs.map(async doc => {
+                            const doc_id = doc.id;
+                            await db.collection('tasks').doc(doc_id).delete();
+                        });
+                        const desc = '<@' + userid + '> のタスクをすべて完了';
+                        resolve(desc);
                     } else {
-                        const task_name = text_args.join(' ');
-                        clearData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_name).endAt(task_name + '\uf8ff').get();
-                    }
-                    if (clearData.empty) {
-                        const error = new RequestError('No such task');
-                        error.code = 500;
-                        reject(error);
-                    }
+                        // clear
+                        const desc = new Array;
+                        let clearData;
+                        if (args[0] === '-d' || args[0] === 'done') {
+                            clearData = await db.collection('tasks').where('user_id', '==', userid).where('status', '==', 'resolved').get();
+                        } else {
+                            const task_name = args.join(' ');
+                            clearData = await db.collection('tasks').where('user_id', '==', userid).orderBy('task_name', 'asc').startAt(task_name).endAt(task_name + '\uf8ff').get();
+                        }
+                        if (clearData.empty) {
+                            const error = new RequestError('No such task');
+                            throw error;
+                        }
 
-                    const batch = db.batch();
-                    clearData.docs.map(async doc => {
-                        const doc_id = doc.id;
-                        const task_name = doc.data().task_name;
-                        const docRef = db.collection('tasks').doc(doc_id);
-                        batch.delete(docRef);
-                        desc += '<@' + userid + '> のタスクを完了: ' + task_name + '\n';
-                    });
+                        const batch = db.batch();
+                        clearData.docs.map(async doc => {
+                            const doc_id = doc.id;
+                            const task_name = doc.data().task_name;
+                            const docRef = db.collection('tasks').doc(doc_id);
+                            batch.delete(docRef);
+                            desc.push('<@' + userid + '> のタスクを完了: ' + task_name);
+                        });
 
-                    // list
-                    resolve(batch.commit().then(async () => list(desc + '\n')));
+                        // list
+                        resolve(batch.commit().then(async () => list(desc.join('\n') + '\n\n')));
+                    }
+                } catch (error) {
+                    error.code = 500;
+                    reject(error);
                 }
             });
         }
 
-        if (command === 'list' || !text_args) {
+        if (command === 'list' || !args) {
             await list('').then(value => post(value));
             res.status(200).send('');
-        } else if (command === 'add' && text_args) {
+        } else if (command === 'add' && args) {
             await add().then(value => post(value));
             res.status(200).send('');
-        } else if (command === 'end' && text_args) {
+        } else if (command === 'start' && args) {
+            await start().then(value => post(value));
+            res.status(200).send('');
+        } else if (command === 'stop' && args) {
+            await stop().then(value => post(value));
+            res.status(200).send('');
+        } else if (command === 'end' && args) {
             await end().then(value => post(value));
             res.status(200).send('');
-        } else if (command === 'clear' && text_args) {
+        } else if (command === 'clear' && args) {
             await clear().then(value => post(value));
             res.status(200).send('');
         } else {
